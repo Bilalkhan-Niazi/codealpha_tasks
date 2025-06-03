@@ -1,0 +1,205 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Portfolio Tracker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+        }
+        #add-stock-form {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        #add-stock-form input, #add-stock-form button {
+            padding: 8px;
+            font-size: 16px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .remove-btn {
+            background-color: #ff4d4d;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .remove-btn:hover {
+            background-color: #cc0000;
+        }
+        #portfolio-value {
+            margin-top: 20px;
+            font-size: 18px;
+        }
+        .error {
+            color: red;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Stock Portfolio Tracker</h1>
+    <form id="add-stock-form">
+        <input type="text" id="stock-symbol" placeholder="Stock Symbol (e.g., AAPL)" required>
+        <input type="number" id="stock-quantity" placeholder="Quantity" min="1" required>
+        <button type="submit">Add Stock</button>
+    </form>
+    <div id="error-message" class="error"></div>
+    <table id="portfolio-table">
+        <thead>
+            <tr>
+                <th>Symbol</th>
+                <th>Quantity</th>
+                <th>Current Price</th>
+                <th>Total Value</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody id="portfolio-body"></tbody>
+    </table>
+    <div id="portfolio-value">Total Portfolio Value: $0.00</div>
+
+    <script>
+        const API_KEY = 'YOUR_API_KEY'; // Replace with your Alpha Vantage API key
+        const portfolio = [];
+
+        // Add stock to portfolio
+        document.getElementById('add-stock-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const symbol = document.getElementById('stock-symbol').value.toUpperCase();
+            const quantity = parseInt(document.getElementById('stock-quantity').value);
+            const errorMessage = document.getElementById('error-message');
+
+            // Clear previous error
+            errorMessage.textContent = '';
+
+            try {
+                const price = await fetchStockPrice(symbol);
+                if (price) {
+                    portfolio.push({ symbol, quantity, price });
+                    updatePortfolioTable();
+                    document.getElementById('add-stock-form').reset();
+                } else {
+                    errorMessage.textContent = 'Invalid stock symbol or API error.';
+                }
+            } catch (error) {
+                errorMessage.textContent = 'Error fetching stock data. Please try again.';
+                console.error(error);
+            }
+        });
+
+        // Fetch stock price from Alpha Vantage API
+        async function fetchStockPrice(symbol) {
+            const response = await fetch(`https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${API_KEY}`);
+            const data = await response.json();
+            const quote = data['Global Quote'];
+            if (quote && quote['05. price']) {
+                return parseFloat(quote['05. price']);
+            }
+            return null;
+        }
+
+        // Update portfolio table and total value
+        function updatePortfolioTable() {
+            const tbody = document.getElementById('portfolio-body');
+            tbody.innerHTML = '';
+            let totalPortfolioValue = 0;
+
+            portfolio.forEach((stock, index) => {
+                const totalValue = (stock.price * stock.quantity).toFixed(2);
+                totalPortfolioValue += parseFloat(totalValue);
+
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${stock.symbol}</td>
+                    <td>${stock.quantity}</td>
+                    <td>$${stock.price.toFixed(2)}</td>
+                    <td>$${totalValue}</td>
+                    <td><button class="remove-btn" data-index="${index}">Remove</button></td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            document.getElementById('portfolio-value').textContent = 
+                `Total Portfolio Value: $${totalPortfolioValue.toFixed(2)}`;
+
+            // Add event listeners to remove buttons
+            document.querySelectorAll('.remove-btn').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    const index = e.target.getAttribute('data-index');
+                    portfolio.splice(index, 1);
+                    updatePortfolioTable();
+                });
+            });
+        }
+
+        // Periodically update stock prices (every 60 seconds)
+        setInterval(async () => {
+            for (let stock of portfolio) {
+                const newPrice = await fetchStockPrice(stock.symbol);
+                if (newPrice) {
+                    stock.price = newPrice;
+                }
+            }
+            updatePortfolioTable();
+        }, 60000);
+    </script>
+</body>
+</html>
